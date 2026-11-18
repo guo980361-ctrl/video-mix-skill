@@ -34,7 +34,33 @@
 
 ---
 
+## 安装
+
+```bash
+git clone https://github.com/guo980361-ctrl/video-mix-skill.git
+cd video-mix-skill/video-mix
+```
+
+把 `video-mix/` 整个目录放进 Agent 的 skills 目录即可被自动发现：
+
+| 运行时 | 安装位置 |
+|---|---|
+| WorkBuddy | `~/.workbuddy/skills/video-mix/` |
+| Claude Code | `~/.claude/skills/video-mix/` |
+
+依赖（脚本会自动引导安装，也可手动装）：
+
+```bash
+pip install edge-tts imageio-ffmpeg requests gradio_client
+```
+
+无需 ffmpeg、brew、GPU。
+
+---
+
 ## 快速开始
+
+以下命令均在 `video-mix/` 目录内执行（即 `cd video-mix-skill/video-mix`）。
 
 ```bash
 pip install edge-tts imageio-ffmpeg requests gradio_client
@@ -146,16 +172,21 @@ export HF_TOKEN=hf_xxxxxxxx   # https://huggingface.co/settings/tokens
 
 ## 目录结构
 
+仓库内的 `video-mix/` 即 skill 包本体：
+
 ```
-video-mix/
-├── SKILL.md                      # Agent 使用说明（含完整工作流与踩坑清单）
-├── scripts/                      # 7 个可执行脚本 + 公共模块
-├── references/
-│   ├── free-backends.md          # 所有后端的实测记录、失效清单、Space 清单
-│   ├── local-gpu.md              # 有独显时的本地部署路线
-│   └── licensing.md              # 商用授权与合规清单
-└── assets/
-    └── shots_template.txt        # 分镜表模板
+video-mix-skill/
+├── README.md
+├── LICENSE
+└── video-mix/
+    ├── SKILL.md                      # Agent 使用说明（含完整工作流与踩坑清单）
+    ├── scripts/                      # 7 个可执行脚本 + 公共模块
+    ├── references/
+    │   ├── free-backends.md          # 所有后端的实测记录、失效清单、Space 清单
+    │   ├── local-gpu.md              # 有独显时的本地部署路线
+    │   └── licensing.md              # 商用授权与合规清单
+    └── assets/
+        └── shots_template.txt        # 分镜表模板
 ```
 
 ---
