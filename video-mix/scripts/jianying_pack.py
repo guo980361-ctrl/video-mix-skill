@@ -326,10 +326,15 @@ def main() -> int:
             clips, voice, bgm, subs, args.width, args.height, args.fps,
             "叠化", 0.5, None, 0.2, 1.0, 0.5, 0.8, 8.0, -0.8, args.name)
         draft_dir = ensure_dir(pack / "jianying-draft")
-        (draft_dir / "draft_content.json").write_text(
-            json.dumps(content, ensure_ascii=False, indent=4), encoding="utf-8")
-        (draft_dir / "draft_meta_info.json").write_text(
-            json.dumps(meta, ensure_ascii=False, indent=4), encoding="utf-8")
+        content_bytes = json.dumps(content, ensure_ascii=False,
+                                   indent=4).encode("utf-8")
+        meta_bytes = json.dumps(meta, ensure_ascii=False,
+                                 indent=4).encode("utf-8")
+        # Both names, same content: 6.0+ reads draft_info.json, 5.9 reads
+        # draft_content.json.
+        for filename in ("draft_info.json", "draft_content.json"):
+            (draft_dir / filename).write_bytes(content_bytes)
+        (draft_dir / "draft_meta_info.json").write_bytes(meta_bytes)
 
     print(f"[pack] OK -> {pack}")
     for item in manifest["clips"]:
