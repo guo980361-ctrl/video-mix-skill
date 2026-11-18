@@ -1,0 +1,22 @@
+# 分镜表模板 —— 每行一个镜头
+#
+# 格式：<提示词> | <文件名（可选）>
+# 竖线后的文件名会作为图片文件名；省略时自动用提示词生成 slug。
+# 顺序即最终合成的顺序。
+#
+# ⚠️ 重要：生图提示词请用**英文**。
+#    实测 Pollinations 对中文提示词的还原度很差：
+#      "一只橘猫坐在窗台上看雨" → 生成了空房间（无猫）
+#      "fluffy orange tabby cat sitting on a windowsill watching rain"
+#                           → 精准还原
+#    分镜可以用中文描述给用户看，但生成时要用英文。
+#
+# 提示词建议包含：主体 + 动作/状态 + 环境 + 光线 + 风格 + 画幅
+# 例：a young woman walking down a rainy neon street | shot01
+#
+# —— 示例（英文提示词）——
+a young woman walking down a rainy neon street, neon reflections in puddles, cinematic | shot01-neon-street
+close-up of steam rising from a coffee cup, morning light through a window | shot02-coffee
+a woman reading a book by an apartment window, sunlight on her face | shot03-reading
+aerial cityscape at dusk, traffic light trails, moody | shot04-cityscape
+product shot of a perfume bottle on marble, soft studio light | shot05-product
