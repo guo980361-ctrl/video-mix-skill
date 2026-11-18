@@ -188,6 +188,75 @@ python scripts/mix.py --clips clips/c1.mp4 clips/c2.mp4 clips/c3.mp4 \
 - `--bgm` 会用 `sidechaincompress` 自动在有人声时压低 BGM（`--no-duck` 关闭）
 - 字幕字号默认按输出宽度 4.5% 自适应；用 `--subtitle-size` 手动覆盖
 
+### 第 7 步（可选）：接入剪映专业版继续精修
+
+成片一步就出，但如果你想**在剪映里继续调**（换字体、加花字、做音效、改节奏），
+把上面那堆素材直接变成一个可编辑的剪映工程：
+
+```bash
+# 生成剪映草稿，--install 直接写进剪映的草稿目录
+python scripts/jianying_draft.py \
+  --clips clips/clip01.mp4 clips/clip02.mp4 clips/clip03.mp4 \
+  --voice voice.mp3 --bgm bgm.mp3 --subtitles voice.srt \
+  --name "我的混剪" --install
+```
+
+打开剪映专业版，首页第一个草稿就是它。里面已经排好：
+
+- **主视频轨**：每个片段是独立 segment，可单独回拉调整、转场是可改的剪映原生转场
+- **字幕轨**：字幕是真正的文本片段（不是烧进画面的），能一键换字体/描边/动画
+- **旁白轨**、**BGM 轨**：分轨摆放，BGM 已按旁白自动做了音量闪避（关键帧）
+
+常用参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--transition 叠化` | 转场名，共 19 种免费转场（`叠化`/`故障`/`上下翻页`/`中心旋转`…） |
+| `--transition-duration 0.5` | 转场时长（秒） |
+| `--width/--height/--fps` | 画布，默认 1080×1920@30（竖屏） |
+| `--bgm-volume 0.2` | BGM 基础音量 |
+| `--subtitle-size 8.0` | 剪映字号（5~12 之间试） |
+| `--subtitle-y -0.8` | 字幕纵向位置，-0.8 在下方，0.8 在上方 |
+| `--encrypt` | 输出加密草稿（需 `pip install pycryptodome`） |
+| `--install` | 直接写入剪映草稿目录；不加则输出到 `--out` |
+
+> 💡 工具会**同时写 `draft_info.json` 和 `draft_content.json`**：
+> 6.0 以后剪映只认 `draft_info.json`，用错名字会报"草稿内容已损坏"。
+> 两个都写就不用管用户装的是哪个版本。
+
+> ⚠️ **版本兼容**：剪映 6.0 起草稿加密，7+ 还隐藏了自动导出的控件。
+> 生成的草稿适配 5.9 / 6.x–10.x；**11.x 可能需要额外注册**。
+> 打不开时用下面的降级方案，或直接用 `mix.py` 出片。
+
+**读写自己已有的加密草稿**：
+
+```bash
+pip install pycryptodome
+python scripts/jianying_crypto.py -p ~/Movies/JianyingPro/User\ Data/Projects/com.lveditor.draft/我的草稿/draft_info.json
+```
+
+加密算法已逆向为纯 Python（AES-256-GCM，key/iv 藏在密文自身），
+**不需要装剪映、不需要 hook、不需要调用原生库**。
+
+**降级方案（版本无关，永远可用）**：
+
+```bash
+python scripts/jianying_pack.py \
+  --clips clips/clip01.mp4 clips/clip02.mp4 --voice voice.mp3 \
+  --bgm bgm.mp3 --subtitles voice.srt --name "我的混剪" --draft
+```
+
+产出一个素材包：分段视频 + 对齐的 SRT 字幕 + 旁白 + BGM + `manifest.json`（含每个片段的时间轴位置）+
+`premiere.xml`（Premiere Pro / DaVinci Resolve 可直接导入）。在剪映里手动导入也是几十秒的事。
+
+**校验草稿**（剪映打不开时先自查，能定位到坏在哪）：
+
+```bash
+python scripts/jianying_check.py ./jianying-out/我的混剪
+```
+
+会检查：JSON 是否合法、素材引用是否悬空、片段是否重叠、取用范围是否超出素材时长、素材文件是否还在。
+
 ## 完整流水线示例
 
 ```bash
@@ -251,6 +320,21 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 9. **中文提示词还原度差**。生图一律用英文提示词（见第 1 步）。
 10. **语音比画面长时会截断配音**。`mix.py` 已用 `tpad` 克隆末帧补齐视频时长，并按目标时长裁剪输出，避免 `-shortest` 砍掉旁白尾句。
 11. **ZeroGPU 额度是按天计的**。同一天内跑满约 3–4 个镜头就会耗尽，必须提前配 `HF_TOKEN`。
+12. **剪映草稿的时间单位是微秒**（1 秒 = 1,000,000）。写成毫秒会导致时间轴对不上——这是剪映自动化最常见的坑。
+13. **转场挂在「前一个」片段上**，且必须在片段加入轨道**之前**注册到 `materials.transitions`，否则转场素材会丢失。
+14. **剪映 6.0 起草稿加密**，7+ 还隐藏了导出控件（自动导出仅 6.x 及以下 + Windows）。
+    加密算法已逆转为纯 Python AES-256-GCM（key/iv 藏在密文自身的 12 个固定偏移里），
+    **不需要装剪映、不需要 hook、不需要原生库**——见 `jianying_crypto.py`。
+15. **剪映 6.0 起正文文件改名 `draft_info.json`**。继续用 5.9 的 `draft_content.json`
+    会报"草稿内容已损坏，请联系客服"，而内容其实完全正常。**两个名字都写最保险**。
+16. **剪映草稿打不开时不会报错，只会显示空白时间线**。用 `jianying_check.py` 自查，
+    它能定位到具体是哪个引用断了、哪段重叠、哪个素材丢了。
+17. **字幕时间轴重叠会被剪映拒绝**。真实场景里 edge-tts 生成的相邻字幕常有几十毫秒重叠，
+    `jianying_draft.py` 已自动裁齐（上游库会直接抛异常）。
+18. **FCPXML 的命名空间必须是默认命名空间**。用 `ns1:` 前缀写 asset 元素，
+    Premiere / Resolve 会直接拒导；时间值也要用有理数（`4/1s`）而不是小数。
+19. **别为了让剪映刷新草稿就去杀剪映进程**。剪映启动时自己会扫描草稿目录，
+    重启即可。强杀有丢失未保存内容的风险。
 
 ## 资源消耗预期
 
@@ -261,6 +345,8 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 | 图片对口型 | 31–60 秒 | HF Wav2Lip Space |
 | 配音 | 2–5 秒 | Edge TTS |
 | 混剪合成 | 5–20 秒 | 本地 ffmpeg |
+| 生成剪映草稿 | <1 秒 | 本地（零外部依赖） |
+| 导出剪映素材包 | <1 秒 | 本地（零外部依赖） |
 
 ## 扩展与替代
 
@@ -281,5 +367,9 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 | `scripts/lipsync.py` | 图片或视频对口型 |
 | `scripts/tts.py` | 配音 + 同步字幕 |
 | `scripts/mix.py` | 混剪合成：转场 + 字幕 + BGM 闪避 |
+| `scripts/jianying_draft.py` | 生成剪映专业版草稿（多轨：视频/字幕/旁白/BGM，带转场与闪避关键帧） |
+| `scripts/jianying_crypto.py` | 剪映草稿离线加解密（AES-256-GCM，无需安装剪映） |
+| `scripts/jianying_pack.py` | 导出剪映素材包 + FCPXML（版本无关的降级方案） |
+| `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |

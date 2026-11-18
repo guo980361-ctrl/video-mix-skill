@@ -164,6 +164,51 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 \
   --subtitles voice.srt --voice voice.mp3 --bgm bgm.mp3
 ```
 
+### 7. 接入剪映专业版（可选，继续精修）
+
+成片一步就出。想**在剪映里继续调**（换字体、加花字、做音效、改节奏），
+把素材直接变成可编辑的剪映工程：
+
+```bash
+# --install 直接写进剪映草稿目录，打开剪映首页就能看到
+python scripts/jianying_draft.py \
+  --clips clips/clip01.mp4 clips/clip02.mp4 clips/clip03.mp4 \
+  --voice voice.mp3 --bgm bgm.mp3 --subtitles voice.srt \
+  --name "我的混剪" --install
+```
+
+打开后已经排好：
+
+| 轨道 | 内容 |
+|---|---|
+| 主视频轨 | 每个片段独立 segment，转场是**剪映原生转场**（可改时长/样式） |
+| 字幕轨 | 真正的文本片段，能一键换字体/描边/花字——**不是烧进画面的** |
+| 旁白轨 / BGM 轨 | 分轨摆放，BGM 已按旁白自动做好音量闪避关键帧 |
+
+> 💡 工具会**同时写 `draft_info.json` 和 `draft_content.json`**。剪映 6.0 起只认
+> `draft_info.json`，用旧名字会报"草稿内容已损坏"，两个都写就不用管版本。
+
+**读写已有的加密草稿**（剪映 6.0 起草稿是加密的）：
+
+```bash
+pip install pycryptodome
+python scripts/jianying_crypto.py -p ~/Movies/JianyingPro/User\ Data/Projects/com.lveditor.draft/我的草稿/draft_info.json
+```
+
+加密算法已逆转为**纯 Python**（AES-256-GCM，key/nonce 藏在密文自身的 12 个固定偏移里）——
+不需要装剪映、不需要 hook、不需要调用原生库。
+
+**草稿打不开时**（版本兼容问题）：
+
+```bash
+# 降级方案：素材包 + SRT + manifest + premiere.xml，版本无关
+python scripts/jianying_pack.py --clips clips/clip01.mp4 --voice voice.mp3 \
+  --bgm bgm.mp3 --subtitles voice.srt --name "我的混剪"
+
+# 自查草稿哪里坏了
+python scripts/jianying_check.py ./jianying-out/我的混剪
+```
+
 ---
 
 ## 脚本
@@ -179,6 +224,10 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 \
 | `scripts/lipsync.py` | 图片 / 视频对口型 |
 | `scripts/tts.py` | 配音 + 时间戳精确对齐的 SRT 字幕 |
 | `scripts/mix.py` | 混剪合成：转场 + 字幕烧录 + BGM 自动闪避 |
+| `scripts/jianying_draft.py` | 生成剪映专业版草稿（多轨：视频/字幕/旁白/BGM，带转场与闪避关键帧） |
+| `scripts/jianying_crypto.py` | 剪映草稿离线加解密（AES-256-GCM，无需安装剪映） |
+| `scripts/jianying_pack.py` | 导出剪映素材包 + FCPXML（版本无关的降级方案） |
+| `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
 
@@ -199,6 +248,12 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 \
 9. **去水印要设 `--min-pixels 3`（不是 12）**。水印左侧的花朵图标每行只有几个像素，按 12 检测会漏掉它下半截笔画，留下可见白色碎点。
 10. **Intel Mac 装不了 PyTorch**。PyTorch 2.3+ 没有 cp313/x86_64 macOS wheel，`pip install torch` 报 "from versions: none"。本地跑扩散模型这条路在 Intel Mac 上是死的。
 11. **HF 上没有常驻 GPU 的免费 i2v Space**。扫了 123 个候选，全是 `cpu-basic` 或 `zero-*`；CPU 后端实测 18 分钟未出片。
+12. **剪映草稿的时间单位是微秒**（1 秒 = 1,000,000）。写成毫秒会导致时间轴对不上——剪映自动化第一大坑。
+13. **剪映 6.0 起正文文件改名 `draft_info.json`**。沿用 5.9 的 `draft_content.json` 会报"草稿内容已损坏，请联系客服"，而内容其实完全正常。**两个名字都写最保险**。
+14. **转场挂在「前一个」片段上**，且必须在片段加入轨道**之前**注册到 `materials.transitions`，否则转场素材会丢。
+15. **剪映草稿打不开时不报错，只显示空白时间线**。用 `jianying_check.py` 自查，能定位到是哪个引用断了、哪段重叠、哪个素材丢了。
+16. **字幕时间轴重叠会被剪映拒绝**。edge-tts 生成的相邻字幕常有几十毫秒重叠，`jianying_draft.py` 已自动裁齐。
+17. **FCPXML 的命名空间必须是默认命名空间**。用 `ns1:` 前缀写 asset 元素，Premiere / Resolve 会直接拒导；时间值也要用有理数（`4/1s`）而不是小数。
 
 ---
 
