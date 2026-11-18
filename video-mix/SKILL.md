@@ -184,6 +184,14 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 clips/clip03.mp4
   --subtitles voice.srt --voice voice.mp3
 ```
 
+**免费 ≠ 无水印。** Pollinations 免费层每张图右下角都盖 `pollinations.ai`，且 `nologo=true` 实测无效。生图后必须过一遍去水印：
+
+```bash
+python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.jpg
+```
+
+脚本用 OpenCV 的 Telea inpaint 填补白色文字像素。**关键参数是 `--min-pixels` 默认 3 而不是 12**——水印左侧的花朵图标每行只有几个像素，按 12 检测会漏掉它下半截的笔画，留下肉眼可见的白色碎点。去水印后再喂给 `still_to_clip.py` / `gen_video.py`。
+
 ## 踩坑清单（已实测确认）
 
 这些坑都真实撞过，不要重复踩：
@@ -194,6 +202,8 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 clips/clip03.mp4
 4. **libass 对 SRT 默认 PlayResX=384**，字号会被放大约 `width/384` 倍。`mix.py` 已改为先转 ASS 并显式声明 PlayResX/PlayResY，字号才是真实像素值。
 5. **ZeroGPU Space 冷启动会超时**。gradio_client 默认超时太短，脚本已加长超时 + 指数退避重试（3 次）。
 6. **ffmpeg 滤镜链的标签必须严格串联**。`[v1][vout]` 这种写法会报 "Error parsing filterchain"，必须由 `;` 分隔成独立 filter。
+7. **Pollinations 免费层必带水印**。`nologo=true` 实测无效，图中右下角固定有 `pollinations.ai`。用 `scripts/dewatermark.py` 去除，别直接交付带水印的成片。
+8. **CPU 后端不要用于生产**。`sdxt` 实测跑 18 分钟未出片，`stable-video-diffusion-img2vid-xt` 也超时。CPU Space 只适合应急验证，正式出片走 ZeroGPU 或本地运镜。
 7. **本机无 brew**。ffmpeg 用 `pip install imageio-ffmpeg` 的静态二进制，脚本会自动定位，不要要求用户装 brew。
 8. **相对输出路径按 CWD 解析**。`--out video-mix-out/demo/a.mp4` 落在 CWD 下，不会变成 `video-mix-out/video-mix-out/...`。
 9. **中文提示词还原度差**。生图一律用英文提示词（见第 1 步）。
@@ -227,4 +237,5 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 clips/clip03.mp4
 | `scripts/lipsync.py` | 图片或视频对口型 |
 | `scripts/tts.py` | 配音 + 同步字幕 |
 | `scripts/mix.py` | 混剪合成：转场 + 字幕 + BGM 闪避 |
+| `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
