@@ -821,6 +821,13 @@ def build_draft(clips: list[Path], voice: Path | None, bgm: Path | None,
         cues = parse_srt(subtitles)
         text_segments = []
         for start, end, body in cues:
+            # The timeline ends with the video, so a subtitle that runs
+            # past it would dangle outside the project.
+            if start >= video_duration:
+                break
+            end = min(end, video_duration)
+            if end <= start:
+                continue
             mid = _new_id()
             materials["texts"].append(text_material_json(
                 body, mid, subtitle_size, (1.0, 1.0, 1.0), 1))
@@ -899,7 +906,7 @@ def main() -> int:
     ap.add_argument("--bgm", help="background music")
     ap.add_argument("--subtitles", help="SRT subtitle file")
     ap.add_argument("--name", default="混剪草稿", help="draft name")
-    ap.add_argument("--out", help="output draft folder (default: ./jianying-out/<name>)")
+    ap.add_argument("--out", help="输出目录，草稿写进 <目录>/<名称>（默认 ./jianying-out）")
     ap.add_argument("--install", action="store_true",
                     help="write into JianYing's draft directory so it shows "
                          "up on the home screen")
@@ -967,9 +974,11 @@ def main() -> int:
         meta["draft_root_path"] = str(root)
         meta["draft_fold_path"] = str(folder)
     else:
-        base = out_path(args.out) if args.out else (
-            Path.cwd() / "jianying-out" / args.name)
-        folder = base
+        # --out is the *parent* directory, matching the default layout
+        # (./jianying-out/<name>).  A path that already ends with the
+        # draft name is used as-is, so it is never doubled.
+        base = out_path(args.out) if args.out else (Path.cwd() / "jianying-out")
+        folder = base if base.name == args.name else base / args.name
 
     write_draft(folder, args.name, content, meta, encrypt=args.encrypt)
 

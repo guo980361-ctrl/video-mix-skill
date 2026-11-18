@@ -219,6 +219,7 @@ python scripts/jianying_draft.py \
 | `--subtitle-y -0.8` | 字幕纵向位置，-0.8 在下方，0.8 在上方 |
 | `--encrypt` | 输出加密草稿（需 `pip install pycryptodome`） |
 | `--install` | 直接写入剪映草稿目录；不加则输出到 `--out` |
+| `--out ./jianying-out` | 输出**父目录**，草稿落在 `<目录>/<名称>/`（和默认路径一致） |
 
 > 💡 工具会**同时写 `draft_info.json` 和 `draft_content.json`**：
 > 6.0 以后剪映只认 `draft_info.json`，用错名字会报"草稿内容已损坏"。
@@ -373,3 +374,18 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 | `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
+| `tests/test_jianying.py` | 剪映接入测试套件（62 个用例，只用标准库） |
+
+## 自测
+
+改动剪映相关脚本后跑一遍回归：
+
+```bash
+python3 tests/test_jianying.py -v
+```
+
+62 个用例，约 30 秒。覆盖草稿加解密、SRT 解析、时间单位（微秒）、
+校验器的故障注入、FCPXML 命名空间，以及三个脚本的端到端命令行调用。
+测试素材用 ffmpeg 现场合成，不依赖任何外部文件；缺 ffmpeg 或
+`pycryptodome` 时相关用例会自动跳过。
+

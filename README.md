@@ -230,6 +230,18 @@ python scripts/jianying_check.py ./jianying-out/我的混剪
 | `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
+| `tests/test_jianying.py` | 剪映接入测试套件（62 个用例，只用标准库） |
+
+### 跑一遍自测
+
+```bash
+cd video-mix
+python3 tests/test_jianying.py -v
+```
+
+62 个用例，约 30 秒。覆盖草稿加解密、SRT 解析、微秒时间单位、校验器的故障注入、
+FCPXML 命名空间，以及三个剪映脚本的端到端命令行调用。测试素材由 ffmpeg 现场合成，
+不依赖任何外部文件；缺 ffmpeg 或 `pycryptodome` 时相关用例自动跳过。
 
 ---
 

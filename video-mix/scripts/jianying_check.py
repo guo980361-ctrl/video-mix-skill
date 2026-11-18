@@ -99,13 +99,15 @@ def check_draft(folder: Path) -> list[str]:
     if not tracks:
         problems.append("没有任何轨道，时间线会是空的")
 
-    max_end = 0
+    track_ends: dict[str, int] = {}
+    video_end = 0
     for track in tracks:
         name = track.get("name", "?")
         segs = track.get("segments", [])
         if not segs:
             problems.append(f"轨道 '{name}' 没有片段")
         ordered = sorted(segs, key=lambda s: s["target_timerange"]["start"])
+        track_end = 0
         for seg in segs:
             mid = seg.get("material_id")
             if mid not in known:
@@ -124,12 +126,11 @@ def check_draft(folder: Path) -> list[str]:
                 problems.append(f"轨道 '{name}' 有零长片段")
             # A segment far shorter than a frame means the duration was
             # written in the wrong unit (ms instead of us, say).
-            if 0 < dur < 1000 and track.get("type") in ("video", "audio"):
+            if 0 < dur < 10_000 and track.get("type") in ("video", "audio"):
                 problems.append(
                     f"轨道 '{name}' 有异常短的片段 ({dur} 微秒)——"
                     f"时长单位可能写错了")
-            max_end = max(max_end, start + dur)
-
+            track_end = max(track_end, start + dur)
             # source range must fit inside the material
             src = seg.get("source_timerange")
             if src:
@@ -156,11 +157,23 @@ def check_draft(folder: Path) -> list[str]:
                     f"轨道 '{name}' 片段重叠: {a_end / SEC:.3f}s > "
                     f"{b_start / SEC:.3f}s")
 
+        track_ends[name] = track_end
+        if track.get("type") == "video":
+            video_end = max(video_end, track_end)
+
     duration = content.get("duration", 0)
-    if max_end and abs(duration - max_end) > 10_000:
+    # The timeline length is defined by the main video track; the other
+    # tracks may legitimately be shorter (a 5 s voice clip under a 30 s
+    # video is normal) but must never reach past the end.
+    if video_end and abs(duration - video_end) > 10_000:
         problems.append(
-            f"草稿时长 {duration / SEC:.3f}s 与轨道实际长度 "
-            f"{max_end / SEC:.3f}s 不一致")
+            f"草稿时长 {duration / SEC:.3f}s 与主视频轨长度 "
+            f"{video_end / SEC:.3f}s 不一致")
+    for name, end in track_ends.items():
+        if duration and end > duration + 10_000:
+            problems.append(
+                f"轨道 '{name}' 超出草稿时长 "
+                f"({end / SEC:.3f}s > {duration / SEC:.3f}s)")
 
     # ---- media files must still be where the draft says they are
     for bucket in ("videos", "audios"):

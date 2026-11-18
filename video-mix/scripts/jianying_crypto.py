@@ -46,6 +46,17 @@ MIN_LEN = 131
 TAG_LEN = 16
 """GCM authentication tag length."""
 
+_PADDING_MARK = b"\x00VMIXPAD"
+"""Marks a payload that carries an explicit length header.
+
+JSON can be padded with whitespace *inside* the object, so its value
+survives the padding.  Arbitrary bytes cannot, so they are prefixed with
+this marker plus an 8-byte length; the padding is then stripped again on
+decrypt and the payload comes back byte for byte.
+"""
+
+_LEN_BYTES = 8
+
 
 def _aes():
     try:
@@ -93,7 +104,12 @@ def decrypt_bytes(data: bytes) -> bytes:
 
     ct, tag = raw[:-TAG_LEN], raw[-TAG_LEN:]
     AES = _aes()
-    return AES.new(key, AES.MODE_GCM, nonce=iv).decrypt_and_verify(ct, tag)
+    plain = AES.new(key, AES.MODE_GCM, nonce=iv).decrypt_and_verify(ct, tag)
+    if plain.startswith(_PADDING_MARK):
+        head = len(_PADDING_MARK) + _LEN_BYTES
+        size = int.from_bytes(plain[len(_PADDING_MARK):head], "big")
+        return plain[head:head + size]
+    return plain
 
 
 def _mux(b64: str, key: bytes, iv: bytes) -> str:
@@ -141,6 +157,14 @@ def encrypt_bytes(plain: bytes, *, seed: int | None = None) -> bytes:
     key = bytes(ord(rng.choice(pool)) for _ in range(32))
     iv = bytes(ord(rng.choice(pool)) for _ in range(16))
 
+    # JSON is padded with whitespace inside the object, which every JSON
+    # parser ignores -- the value is unchanged.  Anything else gets an
+    # explicit length header so the padding can be undone on decrypt.
+    is_json = (plain.lstrip()[:1] == b"{" and plain.rstrip().endswith(b"}"))
+    if not is_json:
+        plain = (_PADDING_MARK + len(plain).to_bytes(_LEN_BYTES, "big")
+                 + plain)
+
     # The base64 payload is interleaved through the whole text, so it must
     # be long enough that the final text reaches MIN_LEN characters.
     min_b64 = MIN_LEN - 48
@@ -152,7 +176,7 @@ def encrypt_bytes(plain: bytes, *, seed: int | None = None) -> bytes:
         # Not enough payload. Grow it without changing the decoded value:
         # for JSON, pad with whitespace *inside* the object, which every
         # JSON parser ignores.
-        if plain.lstrip()[:1] == b"{" and plain.rstrip().endswith(b"}"):
+        if is_json:
             plain = plain[:-1] + b" " * 64 + b"}"
         else:
             plain = plain + b" " * 64

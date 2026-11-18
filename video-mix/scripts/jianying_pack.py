@@ -194,7 +194,7 @@ def main() -> int:
     ap.add_argument("--bgm")
     ap.add_argument("--subtitles")
     ap.add_argument("--name", default="混剪素材包")
-    ap.add_argument("--out", help="output folder (default: ./jianying-pack/<name>)")
+    ap.add_argument("--out", help="输出目录，素材包写进 <目录>/<名称>（默认 ./jianying-pack）")
     ap.add_argument("--draft", action="store_true",
                     help="also emit a JianYing draft alongside the pack")
     ap.add_argument("--width", type=int, default=1080)
@@ -214,8 +214,11 @@ def main() -> int:
     bgm = Path(args.bgm).expanduser().resolve() if args.bgm else None
     subs = Path(args.subtitles).expanduser().resolve() if args.subtitles else None
 
-    base = out_path(args.out) if args.out else (
-        Path.cwd() / "jianying-pack" / args.name)
+    # --out is the *parent* directory, matching the default layout
+    # (./jianying-pack/<name>).  A path that already ends with the pack
+    # name is used as-is, so it is never doubled.
+    base = out_path(args.out) if args.out else (Path.cwd() / "jianying-pack")
+    base = base if base.name == args.name else base / args.name
     pack = ensure_dir(base)
     clips_dir = ensure_dir(pack / "clips")
 
