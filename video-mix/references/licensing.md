@@ -6,21 +6,37 @@
 
 | 环节 | 本 skill 默认方案 | 商用状态 |
 |---|---|---|
-| 文生图 | Pollinations（flux / zimage / sana 模型） | ⚠️ 见下 |
-| 图生视频 | LTX-Video distilled | ⚠️ 见下 |
+| 文生图 | Pollinations（keyed 端点，75 个模型） | ⚠️ 见下 |
+| 图生视频 | Pollinations（25 个模型）/ LTX distilled | ⚠️ 见下 |
 | 对口型 | Wav2Lip | ⚠️ 见下 |
 | 配音 | Microsoft Edge TTS | ⚠️ 见下 |
 | 后期 | ffmpeg | ✅ 无限制 |
 
 ## 逐项说明
 
-### Pollinations 生成的图片
+### Pollinations 生成的图片与视频
 
-- 免费层输出**带 `pollinations.ai` 水印**（实测 `nologo=true` 无效）
+- **匿名端点**（`image.pollinations.ai`）输出**带 `pollinations.ai` 水印**（实测 `nologo=true` 无效），且免费层每 45 秒 1 张
+- **Key 端点**（`gen.pollinations.ai`）输出**无水印**，需免费注册
 - 平台定位为"开源社区 + 捐赠支持"，**API 输出用于商业用途的授权条款不明确**
-- **去水印**：`scripts/dewatermark.py` 可去除水印（OpenCV Telea inpaint，实测干净），但**去除水印不等于获得授权**，水印是 Pollinations 标识其免费服务的方式
+- 去水印：`scripts/dewatermark.py` 可去除水印（OpenCV Telea inpaint，实测干净），但**去除水印不等于获得授权**——水印是 Pollinations 标识其免费服务的方式
 - 建议：商业项目改用本地 FLUX / SDXL（Apache 2.0 / MIT），或购买 Pollinations 的 API 商业版
-- **替代方案**：本地部署 FLUX.1-schnell（Apache 2.0），商用无忧
+- **替代方案**：本地部署 FLUX.1-schnell（Apache 2.0），商用无忧（但需要 NVIDIA 显卡，见 `local-gpu.md`）
+
+### Pollinations 视频模型
+
+Key 端点可用的 25 个视频模型横跨多家厂商，**授权各不相同**，逐个用之前必须查该模型卡：
+
+| 模型 | 厂商 | 备注 |
+|---|---|---|
+| `google/veo-3.1-fast` | Google | 闭源，商用需查 Google 条款 |
+| `bytedance/seedance-2.0*` | 字节 | 闭源，商用需查字节条款 |
+| `kwaivgi/kling-v3.0-std` | 快手 | 闭源 |
+| `alibaba/wan-2.7` / `wan-3.0` | 阿里 | 开放权重，但**生成结果**的授权另算 |
+| `black-forest-labs/flux-3-max` | BFL | Flux 权重为 Apache 2.0 / 非商用混合，**逐版本确认** |
+| `x-ai/grok-imagine-video` | xAI | 闭源 |
+
+**这是"免费"里最容易踩法律坑的地方**：技术可调用 ≠ 授权可商用。客户交付前逐个确认模型卡。
 
 ### 关于"免费"的真实边界
 
@@ -28,13 +44,13 @@
 
 | 成本项 | 免费层现状 | 触顶表现 |
 |---|---|---|
-| 生图限速 | 每 IP 每 45 秒 1 张 | HTTP 402 `FREE_LIMIT` |
-| 生图水印 | 每张必带 `pollinations.ai` | 需本地去水印 |
-| 图生视频额度 | 匿名 2 分钟 GPU/天 | 120s requested vs. -60s left |
-| 图片对口型额度 | 同上，CPU 后端不占额度但极慢 | 同上 |
+| 生图限速（匿名） | 每 IP 每 45 秒 1 张 | HTTP 402 `FREE_LIMIT` |
+| 生图水印（匿名） | 每张必带 `pollinations.ai` | 需本地去水印 |
+| 账户余额（key） | 新号 0.25 USD，可靠 quest 补到 132+ USD | HTTP 402 |
+| 每日额度（HF） | 匿名 2 分钟 / 免费账号 5 分钟 / PRO 40 分钟 | `exceeded your ZeroGPU quota` |
 | 商用授权 | **不明确** | 无技术手段规避 |
 
-也就是说：这条流水线能做到**零现金支出**，但做不到**零约束**。个人创作、自媒体测试完全够用；客户交付或商业发布前，至少要把生图迁到本地 FLUX（Apache 2.0），并确认 TTS 与视频模型的授权门槛。
+也就是说：这条流水线能做到**零现金支出**，但做不到**零约束**。个人创作、自媒体测试完全够用；客户交付或商业发布前，至少要把生图迁到本地 FLUX（Apache 2.0），并逐个确认 TTS 与视频模型的授权门槛。
 
 ### LTX-Video
 

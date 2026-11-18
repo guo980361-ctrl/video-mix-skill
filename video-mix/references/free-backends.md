@@ -10,9 +10,90 @@
 
 ---
 
+## 零、结论速查：选哪一层
+
+| 层 | 后端 | key | 天花板 | 水印 |
+|---|---|---|---|---|
+| ① 长期 | `gen.pollinations.ai` | 需要（免费注册） | 账户余额，可靠 quest 补 | **无** |
+| ② 每日 | HF ZeroGPU Space | 可选 | 2–40 分钟 GPU/天 | 无 |
+| ③ 零消耗 | 本地 ffmpeg 运镜 | 不需要 | 无限制 | 无 |
+
+**想长期稳定出片 → 配 ① 的 key。** 一次注册，之后 75 个图片模型 + 25 个视频模型可用，余额可通过 quest 免费补充。
+
+---
+
 ## 一、可用（实测通过）
 
-### 文生图 — Pollinations 免 Key
+### ⭐ 文生图（长期层）— Pollinations Key 端点
+
+```
+GET https://gen.pollinations.ai/image/<urlencoded prompt>
+    ?model=tongyi-mai/z-image-turbo&width=1024&height=1024&nologo=true
+Authorization: Bearer <pk_xxx>
+```
+
+| 项 | 实测结果 |
+|---|---|
+| HTTP（带 key） | 200 |
+| HTTP（不带 key） | **401**，`A valid API key is required` |
+| 水印 | **无**（这是相对匿名端点最大的优势） |
+| 限速 | 无 45 秒限制 |
+| 计费 | 扣账户余额 |
+
+**绕过 key 的尝试全部失败**（实测）：`key=free`、`referrer=workflow`、`private=true`、不带任何参数——一律 401。不要再试参数组合，直接注册。
+
+注册地址：https://enter.pollinations.ai/keys （新账号自动到账 0.25 USD）
+
+**可用图片模型 75 个**，实测确认可用的一批：
+
+```
+tongyi-mai/z-image-turbo
+black-forest-labs/flux.1-schnell
+black-forest-labs/flux-3-image-klein
+qwen/qwen-image-2.1-turbo
+bytedance/seedream-5.0-flash
+google/gemini-nano-banana-2.1
+```
+
+完整清单：`GET https://gen.pollinations.ai/image/models?reliability=reliable&source=official`
+
+### ⭐ 图生视频（长期层）— Pollinations Key 端点
+
+```
+GET https://gen.pollinations.ai/video/<urlencoded prompt>
+    ?model=bytedance/seedance-2.0-fast&duration=4&image=data:image/jpeg;base64,...
+Authorization: Bearer <pk_xxx>
+```
+
+异步模式：首次响应返回 job id，轮询 `GET /v1/jobs/{id}/result` 取结果。
+
+**25 个视频模型，全部支持 `start_frame`（图生视频）**：
+
+```
+google/veo-3.1-fast          bytedance/seedance-2.5
+bytedance/seedance-2.0       bytedance/seedance-2.0-fast
+bytedance/seedance-2.0-mini  kwaivgi/kling-v3.0-std
+alibaba/wan-3.0              alibaba/wan-2.7
+alibaba/wan-2.2-fast         black-forest-labs/flux-3-max
+x-ai/grok-imagine-video-1.5   x-ai/grok-imagine-video-1.5-lite
+mirelo/sfx-2.0               ...
+```
+
+完整清单：`GET https://gen.pollinations.ai/video/models?reliability=reliable&source=official`
+
+**这一层不消耗任何 HF ZeroGPU 额度**，是解决每日额度瓶颈的关键。
+
+### ⭐ 免费额度补充机制 — Quest
+
+`GET https://gen.pollinations.ai/quests/catalog`（公开端点，免 key 可读）
+
+实测：**26 个零成本 quest 合计 132.75 USD**，另有 4 个需先充值/付费的（已单独标记，不要误当成免费）。
+
+零成本 quest 包括：Discord 等级（+1/+2/+5）、提交 PR（+5）、做一个 agent skill（+10）、邀请好友（+2）、创建 key（+0.25）、用一次视频模型（+1）……
+
+**这是真正意义上"长期免费"的机制**：余额用完了，去 https://pollinations.ai/community 做几个 quest 就补回来了。
+
+### 文生图（零门槛层）— Pollinations 匿名端点
 
 ```
 GET https://image.pollinations.ai/prompt/<urlencoded prompt>
@@ -121,15 +202,46 @@ edge-tts --voice zh-CN-YunxiNeural --text "..." --write-media out.mp3
 
 | 服务 | 实测结果 | 说明 |
 |---|---|---|
-| `gen.pollinations.ai/video/` | **401 UNAUTHORIZED** | 视频接口已全面要求 API Key |
-| `gen.pollinations.ai/image/` 免 Key | 返回图片二进制但需 Key | 无 Key 时 401 |
 | `video.pollinations.ai/video/` | **连接失败（HTTP 000）** | 域名已不可达 |
 | `image.pollinations.ai/prompt/` 带 `nologo=true` | 水印仍在 | 参数免费层不生效 |
 | Pollinations 旧免 Key 批量生图 | **402 FREE_LIMIT** | 45 秒配额硬限制 |
+| `gen.pollinations.ai` 免 Key | **401 UNAUTHORIZED** | 必须带 key（这是设计如此，不是 bug） |
+| `gen.pollinations.ai` + `key=free` / `referrer=` | **401** | 实测各种绕过参数组合全部失败 |
+| `image.pollinations.ai` 的 `kontext` / `gptimage` 模型 | **403 / 402** | 这些是付费档模型 |
+
+> **更正**：早期记录里写「`gen.pollinations.ai/video/` 401」被理解为"视频接口已废弃"。实际是**整个 gen 端点都需要 key**，配了 key 后视频功能完全正常，而且有 25 个模型。这是本 skill 最重要的更新。
 
 ---
 
-## 三、其他候选（未实测或未启用）
+## 三、死路（实测排除，不要再试）
+
+### ❌ Intel Mac 上本地跑扩散模型
+
+| 尝试 | 结果 |
+|---|---|
+| `pip install torch` | `ERROR: Could not find a version that satisfies the requirement torch (from versions: none)` |
+| `pip install torch==2.2.2 --index-url https://pypi.org/simple` | 同样报 "from versions: none" |
+| 查询 PyPI JSON API | torch 2.2.2 只有 cp38/39/310/311/312 的 macos x86_64 wheel，**没有 cp313** |
+
+**根因**：PyTorch 从 2.3 起停止发布 x86_64 macOS wheel（Apple Silicon 走 arm64）。本机 Python 是 3.13，唯一能用的是 torch 2.2.2 + Python 3.12，而 WorkBuddy 内置 Python 是 3.13。
+
+即使装上，8GB 内存跑 FLUX 1.2B 也需要 5–15 分钟/张，且只有 36GB 磁盘。**这条路在 Intel Mac 上是死的。**
+
+### ❌ HF 上的免费常驻 GPU
+
+扫描 123 个 i2v 相关 Space，结果：
+
+- `cpu-basic`（CPU 常驻，不占 ZeroGPU 额度）：`waloneai/SDXT-Image-To-Video`、`pm6six/Image_to_video`、`abonline/stable-video-diffusion-img2vid-xt`、`AiGuaratuba/Stable-Video-Diffusion-Img2Vid-10seconds`
+- `zero-*`（占 ZeroGPU 额度）：其余全部
+- **常驻付费 GPU（l4x1 / a10g-small / t4-small）：0 个**
+
+**实测性能**：CPU 后端跑扩散模型慢到不可用——`SDXT` 跑了 18 分钟仍未出片，已终止；`stable-video-diffusion-img2vid-xt` 同样超时。
+
+**结论：真动态只有两条路**——Pollinations key 层（消耗账户余额）或 HF ZeroGPU（消耗每日 GPU 额度）。CPU Space 只能应急验证。
+
+---
+
+## 四、其他候选（未实测或未启用）
 
 ### HF ZeroGPU 每日额度
 
@@ -138,6 +250,8 @@ edge-tts --voice zh-CN-YunxiNeural --text "..." --write-media out.mp3
 | 未认证 | 2 分钟 |
 | 免费账户 | 5 分钟 |
 | PRO | 40 分钟 |
+
+**额度重置机制**（官方文档）：**在首次使用 GPU 后整 24 小时重置**，不是自然日零点了。所以"今天用完了"要等到"昨天那个时刻"才恢复，不必非等到午夜。
 
 **实测耗尽记录**：匿名状态下跑完 3 个图生视频请求后，第 4 个开始返回：
 
@@ -153,7 +267,7 @@ AppError: You have exceeded your ZeroGPU runs limit.
 Authenticate with a Hugging Face token for more quota
 ```
 
-**排期建议**：做 N 个镜头，先估算 `(N × 25秒 + 对口型镜头数 × 45秒) ≤ 120秒`（匿名）或 `≤ 300秒`（免费账号）。超出要么等第二天，要么用 `still_to_clip.py` 做零额度兜底。
+**排期建议**：做 N 个镜头，先估算 `(N × 25秒 + 对口型镜头数 × 45秒) ≤ 120秒`（匿名）或 `≤ 300秒`（免费账号）。超出要么等重置，要么用 `still_to_clip.py` 做零额度兜底。
 
 **Token 配置**（免费账号即可）：
 

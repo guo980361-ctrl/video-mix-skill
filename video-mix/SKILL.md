@@ -1,44 +1,72 @@
 ---
 name: video-mix
-description: 混剪视频制作的端到端流水线skill，基于全免费免Key云端接口实现文生图、图生视频、图片对口型、配音与字幕生成，最终用ffmpeg本地合成为带转场和字幕的成片。当用户需要"做混剪视频""AI生成视频""图片转视频""让图片说话""对口型""AI配音""批量生成分镜素材""短视频批量生产"时使用本skill。This skill should be used when creating montage/compilation videos, generating images or video from text, animating still images, lip-syncing photos to audio, or batch-producing short-form video content.
+description: 混剪视频制作的端到端流水线skill，基于免费云端接口实现文生图、图生视频、图片对口型、配音与字幕生成，最终用ffmpeg本地合成为带转场和字幕的成片。支持配置 Pollinations API key 获得无水印生成与长期可用额度，内置内容缓存与额度查询以控制消耗。当用户需要"做混剪视频""AI生成视频""图片转视频""让图片说话""对口型""AI配音""批量生成分镜素材""短视频批量生产"时使用本skill。This skill should be used when creating montage/compilation videos, generating images or video from text, animating still images, lip-syncing photos to audio, or batch-producing short-form video content.
 agent_created: true
 ---
 
 # 混剪视频制作 Skill
 
-用**全免费、免 API Key** 的接口完成「文生图 → 图生视频 → 对口型 → 配音字幕 → 混剪成片」全流程。
+用**免费**的云端接口完成「文生图 → 图生视频 → 对口型 → 配音字幕 → 混剪成片」全流程。
 
 ## 核心前提：算力决定架构
 
-本 skill 面向**没有独立显卡的机器**（Intel Mac / 集显 / 无 GPU 云主机）。所有重型生成走**云端免费 Space**，本地只做 ffmpeg 后期。
+本 skill 面向**没有独立显卡的机器**（Intel Mac / 集显 / 无 GPU 云主机）。所有重型生成走**云端免费接口**，本地只做 ffmpeg 后期。
 
-**不要尝试本地跑 ComfyUI / Wan2.2 / Stable Diffusion**——需要 NVIDIA 8GB+ 显存，集显机器必然失败。若用户有独显机器，再考虑本地化（见 `references/local-gpu.md`）。
+**不要尝试本地跑 ComfyUI / Wan2.2 / Stable Diffusion**——需要 NVIDIA 8GB+ 显存，集显机器必然失败。Intel Mac 更不现实：PyTorch 从 2.3 起就没有 x86_64 macOS 的 wheel（实测 `pip install torch` 报 "from versions: none"）。若用户有独显机器，再考虑本地化（见 `references/local-gpu.md`）。
 
-## ⚠️ 第一个必须知道的事：HF 每日 GPU 额度
+## ⚠️ 第一个必须知道的事：三层资源，各有各的天花板
 
-Hugging Face ZeroGPU Space 的免费额度是**按天计的，不是按次计的**：
+"免费"在这里有三个不同的含义，选错层级会浪费大量时间：
+
+| 层级 | 后端 | 天花板 | 是否要 key |
+|---|---|---|---|
+| **① 长期可用** | `gen.pollinations.ai` | 账户余额（可免费赚取） | ✅ 需免费注册 |
+| **② 每日额度** | HF ZeroGPU Space | 2–40 分钟 GPU/天 | ❌ 可选 token |
+| **③ 零消耗** | 本地 ffmpeg 运镜 | 无限制 | ❌ 不需要 |
+
+### ① 长期可用层（推荐首选）
+
+注册一次 Pollinations key，之后长期使用，**无水印、无 45 秒限速、不占 HF 额度**。
+
+```bash
+# 1. 免费注册并创建 key：https://enter.pollinations.ai/keys
+# 2. 保存（脚本会写 ~/.workbuddy/.pollinations_key，权限 600）
+python scripts/polli_account.py key --set pk_xxxxxxxx
+
+# 3. 随时查看余额与用量
+python scripts/polli_account.py balance
+python scripts/polli_account.py usage
+```
+
+**新账号自动到账 0.25 USD。** 余额用完可以免费赚回来——quest 系统里有 **26 个零成本任务合计 132.75 USD**（Discord 等级、提交 PR、做一个 agent skill 等）：
+
+```bash
+python scripts/polli_account.py quests
+```
+
+这个层级能用的是 **25 个视频模型**（Veo 3.1、Seedance 2.x、Kling 3.0、Wan 3.0、Flux 3 Max…），全部支持 `start_frame` 图生视频。
+
+### ② 每日额度层（无 key 时的兜底）
+
+Hugging Face ZeroGPU 的免费额度**按天计，不是按次计**：
 
 | 账户状态 | 每日 GPU 时长 | 够跑几个镜头 |
 |---|---|---|
 | 匿名（无 token） | 2 分钟 | 约 3–4 个镜头 |
 | 免费账号（绑 token） | 5 分钟 | 约 8–10 个镜头 |
-| PRO | 40 分钟 | 足够批量生产 |
+| PRO（$9/月） | 40 分钟 | 足够批量生产 |
 
-**一次图生视频约消耗 20 秒 GPU 时间，一次对口型约 30–60 秒。** 所以匿名状态下做完 3 个镜头基本就见底了。
+一次图生视频约 20 秒 GPU，一次对口型 30–60 秒。额度耗尽时报 `You have exceeded your ZeroGPU quota`，脚本会自动回退。
 
-额度耗尽时报错 `You have exceeded your ZeroGPU quota`，此时：
+### ③ 零消耗层（永不失败）
 
-1. 脚本会自动回退到下一个后端（`ltx` → `wan` → `sdxt`）
-2. `sdxt` 是 CPU 常驻后端，**不占 GPU 额度**，画质较低但能保住流水线
-3. **要批量生产，必须先配 token**：
+`scripts/still_to_clip.py` 用本地 ffmpeg 做 Ken Burns 运镜，**零额度、零网络、1–2 秒出片**。`gen_video.py --backend local` 已集成它。
 
-```bash
-export HF_TOKEN=hf_xxxxxxxx     # https://huggingface.co/settings/tokens 免费创建
-```
+### 省额度的三个习惯
 
-脚本会自动读取环境变量 `HF_TOKEN`，或 `~/.workbuddy/.hf_token` 文件。
-
-**给用户排任务前，先确认分镜数量 × 每镜耗时是否在额度内。** 超了就是白等。
+1. **配 key**（①层）——没有 key 就只能挤在 2 分钟/天的额度里
+2. **用缓存**——`gen_image.py` 内置内容寻址缓存（`~/.workbuddy/cache/video-mix`），同一 prompt + 参数**只付一次钱**。实测：批量生图首次 62.6 秒，重跑 3.3 秒全部命中缓存
+3. **先查余额**——批量任务前跑 `polli_account.py balance`，别做到一半发现余额空了
 
 ## 工作流程
 
@@ -81,7 +109,11 @@ close-up of steam rising from a coffee cup | shot02-coffee
 python scripts/gen_shots.py --shots shots.txt --outdir ./shots --width 1024 --height 1024
 ```
 
-**关键约束**：Pollinations 免 Key 免费层**每 IP 每 45 秒只能生成 1 张图**，超过就返回 HTTP 402（`FREE_LIMIT`）。脚本已内置 46 秒节流和 402 自动重试。批量生成 8 张约需 6 分钟，**不要并发跑**。
+**配了 key 之后**（推荐），走 `gen.pollinations.ai`：**无水印、无 45 秒限速**，而且生图很便宜。脚本会自动检测 key 并选后端。
+
+**没配 key** 时走 `image.pollinations.ai` 匿名端点：每 IP 每 45 秒只能生成 1 张图，超过返回 HTTP 402（`FREE_LIMIT`）。脚本已内置 46 秒节流和 402 自动重试。批量生成 8 张约需 6 分钟，**不要并发跑**。
+
+**缓存已内置**：同一 prompt + 参数只付一次钱。已存在的文件会被跳过，重跑整个分镜表零消耗。
 
 单张补图用 `scripts/gen_image.py`（参数见 `--help`）。
 
@@ -93,24 +125,31 @@ python scripts/gen_video.py --image shots/shot01.jpg \
   --out clips/clip01.mp4
 ```
 
-默认后端 `ltx`（Lightricks/ltx-video-distilled），实测 **17–20 秒出片**。
+后端按可用性分级回退：
 
-后端按 `ltx` → `wan` → `sdxt` 顺序自动回退：
-
-| 后端 | 硬件 | 画质 | 耗时 | 占 GPU 额度 |
+| 后端 | 条件 | 画质 | 耗时 | 占额度 |
 |---|---|---|---|---|
-| `ltx` | zero-a10g | 高 | 17–20 秒 | 是 |
-| `wan` | zero-a10g | 高（14B） | 60–120 秒 | 是 |
-| `sdxt` | cpu-basic | 中 | **8 分钟以上** | 否 |
+| `pollinations` | 有 key | 高 | 30–120 秒 | 账户余额 |
+| `ltx` | 无 key | 高 | 17–20 秒 | HF 每日 2–40 分钟 |
+| `wan` | 无 key | 高（14B） | 60–120 秒 | HF 每日额度 |
+| `local` | 手动指定 | 中 | **1–2 秒** | **零** |
 
-**`sdxt` 极慢**（CPU 跑扩散模型），只适合额度彻底耗尽时救急。真正的兜底是用静态图做运镜：
+配了 key 就优先用 `pollinations`——**不与 HF 额度竞争**，而且能选 Veo 3.1、Seedance 2.x、Kling 3.0、Wan 3.0 这些一线模型：
+
+```bash
+python scripts/gen_video.py --image shots/shot01.jpg \
+  --prompt "..." --out clips/clip01.mp4 \
+  --backend pollinations --model bytedance/seedance-2.0-fast
+```
+
+**`wan` 和 `sdxt` 极慢**（CPU 跑扩散模型），只适合额度彻底耗尽时救急。真正的兜底是用静态图做运镜：
 
 ```bash
 python scripts/still_to_clip.py --image shots/shot01.jpg \
   --out clips/clip01.mp4 --seconds 4 --motion zoom-in
 ```
 
-运镜方向可选 `zoom-in`、`zoom-out`、`zoom-in-left`、`zoom-in-right`、`still`。这条路径**完全不消耗任何云端额度**，且本地渲染只要 1–2 秒。
+运镜方向可选 `zoom-in`、`zoom-out`、`zoom-in-left`、`zoom-in-right`、`still`。这条路径**完全不消耗任何云端额度**，且本地渲染只要 1–2 秒。也可以直接 `--backend local`。
 
 运动幅度要**小**：LTX 对大幅动作容易形变。写 "slight head turn"、"gentle hair movement" 这类微动，不要写 "running toward camera"。
 
@@ -202,8 +241,11 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 4. **libass 对 SRT 默认 PlayResX=384**，字号会被放大约 `width/384` 倍。`mix.py` 已改为先转 ASS 并显式声明 PlayResX/PlayResY，字号才是真实像素值。
 5. **ZeroGPU Space 冷启动会超时**。gradio_client 默认超时太短，脚本已加长超时 + 指数退避重试（3 次）。
 6. **ffmpeg 滤镜链的标签必须严格串联**。`[v1][vout]` 这种写法会报 "Error parsing filterchain"，必须由 `;` 分隔成独立 filter。
-7. **Pollinations 免费层必带水印**。`nologo=true` 实测无效，图中右下角固定有 `pollinations.ai`。用 `scripts/dewatermark.py` 去除，别直接交付带水印的成片。
-8. **CPU 后端不要用于生产**。`sdxt` 实测跑 18 分钟未出片，`stable-video-diffusion-img2vid-xt` 也超时。CPU Space 只适合应急验证，正式出片走 ZeroGPU 或本地运镜。
+7. **Pollinations 免费层必带水印**。`nologo=true` 实测无效，图中右下角固定有 `pollinations.ai`。用 `scripts/dewatermark.py` 去除，别直接交付带水印的成片。（要根治得配 key，用 `gen.pollinations.ai` 端点，天然无水印。）
+8. **CPU 后端不要用于生产**。`sdxt` 实测跑 18 分钟未出片，`stable-video-diffusion-img2vid-xt` 也超时。CPU Space 只适合应急验证，正式出片走 Pollinations key 层或本地运镜。
+9. **`gen.pollinations.ai` 必须带 key**。不带 key 一律 401（实测 `key=free`、`referrer=` 都不能绕过）。不要浪费时间试参数组合——直接注册。
+10. **Intel Mac 装不了 PyTorch**。PyTorch 2.3+ 没有 cp313/x86_64 macOS wheel，`pip install torch` 报 "from versions: none"。本地生成模型这条路在 Intel Mac 上是死的，别浪费时间。
+11. **HF 上没有常驻 GPU 的免费 i2v Space**。扫了 123 个候选，全部是 `cpu-basic` 或 `zero-*`。真动态只有 ZeroGPU 和 Pollinations 两条路。
 7. **本机无 brew**。ffmpeg 用 `pip install imageio-ffmpeg` 的静态二进制，脚本会自动定位，不要要求用户装 brew。
 8. **相对输出路径按 CWD 解析**。`--out video-mix-out/demo/a.mp4` 落在 CWD 下，不会变成 `video-mix-out/video-mix-out/...`。
 9. **中文提示词还原度差**。生图一律用英文提示词（见第 1 步）。
@@ -230,9 +272,11 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 
 | 脚本 | 作用 |
 |---|---|
-| `scripts/gen_image.py` | 单张文生图 |
-| `scripts/gen_shots.py` | 按分镜表批量生图（含限速节流） |
-| `scripts/gen_video.py` | 图生视频（ltx / wan / sdxt 三级回退） |
+| `scripts/polli_account.py` | 额度管理：余额、用量、quest 清单、key 保存、模型列表 |
+| `scripts/pollinations_client.py` | Pollinations 客户端（图像/视频/账户 API） |
+| `scripts/gen_image.py` | 单张文生图（keyed 无水印 / anon 有水印，带缓存） |
+| `scripts/gen_shots.py` | 按分镜表批量生图（跳过已存在 + 缓存命中） |
+| `scripts/gen_video.py` | 图生视频（pollinations → ltx → wan → local 分级回退） |
 | `scripts/still_to_clip.py` | 静态图 → 运镜片段（零额度消耗的兜底） |
 | `scripts/lipsync.py` | 图片或视频对口型 |
 | `scripts/tts.py` | 配音 + 同步字幕 |

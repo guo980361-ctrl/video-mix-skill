@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Image-to-video via free Hugging Face Spaces (no API key).
+"""Image-to-video with a tiered set of backends.
 
-Verified 2026-11-18:
-  Lightricks/ltx-video-distilled  -> /image_to_video
-      704x512, 30fps, 1.9s clip, 19.8s wall clock, zero-a10g GPU.
+Backend order for ``--backend auto``:
 
-Backends are tried in order; the first one that returns a video wins.
+1. **pollinations** - ``gen.pollinations.ai``. Needs a free API key. Gives
+   access to Veo 3.1, Seedance 2.x, Kling 3.0 and Wan 3.0, none of which
+   touch the Hugging Face ZeroGPU quota. This is the long-term option.
+2. **ltx** - the ``Lightricks/ltx-video-distilled`` Space. No key, but it
+   spends ZeroGPU quota, which is capped at 2 minutes/day anonymously.
+3. **wan** - ``Upsampler/wan-2-2-14b-image-to-video``. Same quota pool.
+4. **sdxt** - a CPU-resident Space. Consumes no quota but is far too slow
+   for production (measured: still running after 18 minutes).
+
+``--backend local`` is the offline escape hatch: it animates the still image
+with a Ken Burns move via ffmpeg, costs nothing and takes about a second.
 
 Usage:
     python gen_video.py --image face.jpg --prompt "she turns and smiles" --out clip.mp4
-    python gen_video.py --image face.jpg --prompt "..." --out c.mp4 --backend wan
+    python gen_video.py --image face.jpg --prompt "..." --out c.mp4 --backend ltx
+    python gen_video.py --image face.jpg --prompt "..." --out d.mp4 --backend pollinations
 """
 
 from __future__ import annotations
@@ -21,6 +30,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pollinations_client import (  # noqa: E402
+    VIDEO_MODELS,
+    PollinationsError,
+    find_key,
+    gen_video as polli_gen_video,
+)
 from vmix_common import (hf_token, install_deps, out_path, quota_hint,  # noqa: E402
                          retry)
 
@@ -163,13 +178,61 @@ def gen_sdxt(image: Path, prompt: str, out: Path, width: int, height: int,
     return _save(res, out)
 
 
+def gen_pollinations(image: Path, prompt: str, out: Path, width: int,
+                     height: int, duration: int, seed: int | None,
+                     model: str | None = None) -> Path:
+    """Key-backed video generation. No ZeroGPU quota involved."""
+    key = find_key()
+    if not key:
+        raise PollinationsError(
+            "Pollinations 视频后端需要 API key（免费注册即得 0.25 USD，"
+            "且不消耗 HF 额度）。\n"
+            "  打开 https://enter.pollinations.ai/keys 创建 key，"
+            "然后 export POLLINATIONS_KEY=pk_xxx"
+        )
+    mdl = model or VIDEO_MODELS[1]
+    return polli_gen_video(prompt, out, image=image, model=mdl,
+                           width=width, height=height, duration=duration,
+                           key=key)
+
+
+def gen_local(image: Path, prompt: str, out: Path, width: int,
+              height: int, duration: int, seed: int | None) -> Path:
+    """Offline fallback: animate the still with a Ken Burns move."""
+    from still_to_clip import main as still_main
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_out = Path(td) / "clip.mp4"
+        argv = sys.argv
+        sys.argv = ["still_to_clip.py", "--image", str(image),
+                    "--out", str(tmp_out), "--seconds", str(max(1, duration)),
+                    "--width", str(width), "--height", str(height),
+                    "--motion", "zoom-in"]
+        try:
+            rc = still_main()
+        finally:
+            sys.argv = argv
+        if rc != 0 or not tmp_out.exists():
+            raise RuntimeError("local Ken Burns fallback failed")
+        # shutil.copy raises FileNotFoundError when the destination
+        # directory does not exist, so create it first.
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(tmp_out, out)
+    return out
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Free image-to-video (no API key)")
+    ap = argparse.ArgumentParser(description="Image-to-video with tiered backends")
     ap.add_argument("--image", required=True)
     ap.add_argument("--prompt", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--backend", default="auto",
-                    choices=["auto", "ltx", "wan", "sdxt"])
+                    choices=["auto", "pollinations", "ltx", "wan", "sdxt", "local"])
+    ap.add_argument("--model", default=None,
+                    help="pollinations backend model, e.g. "
+                         f"{VIDEO_MODELS[1]}")
+    ap.add_argument("--key", help="Pollinations API key (overrides env/file)")
     ap.add_argument("--width", type=int, default=704)
     ap.add_argument("--height", type=int, default=512)
     ap.add_argument("--duration", type=int, default=2)
@@ -183,11 +246,24 @@ def main() -> int:
         return 1
     out = out_path(args.out)
 
-    # Backends are tried in order. If the primary exhausts the ZeroGPU
-    # daily quota, fall through to the next one instead of hard-failing.
-    order = (["ltx", "wan", "sdxt"] if args.backend == "auto"
-             else [args.backend])
-    fns = {"ltx": gen_ltx, "wan": gen_wan, "sdxt": gen_sdxt}
+    # The keyed backend is tried first because it does not compete for the
+    # ZeroGPU daily allowance, which is the scarcest resource in this
+    # pipeline. The HF Spaces remain as no-key fallbacks.
+    if args.backend == "auto":
+        order = ["pollinations", "ltx", "wan"]
+        if not find_key(args.key):
+            order = ["ltx", "wan"]
+    else:
+        order = [args.backend]
+
+    fns = {
+        "pollinations": lambda i, p, o, w, h, d, s: gen_pollinations(
+            i, p, o, w, h, d, s, args.model),
+        "ltx": gen_ltx,
+        "wan": gen_wan,
+        "sdxt": gen_sdxt,
+        "local": gen_local,
+    }
 
     t0 = time.time()
     last = None
@@ -201,12 +277,17 @@ def main() -> int:
         except Exception as exc:
             last = exc
             print(f"[i2v] backend {backend} failed:", file=sys.stderr)
-            print(quota_hint(exc), file=sys.stderr)
-            if backend != order[-1]:
+            if isinstance(exc, PollinationsError):
+                print(str(exc), file=sys.stderr)
+            else:
+                print(quota_hint(exc), file=sys.stderr)
+            if idx + 1 < len(order):
                 print(f"[i2v] falling back to {order[idx + 1]}", file=sys.stderr)
 
     if path is None:
         print(f"[i2v] all backends failed: {last}", file=sys.stderr)
+        print("  最后兜底：--backend local（本地运镜，零额度、零网络）",
+              file=sys.stderr)
         return 2
 
     kb = path.stat().st_size / 1024

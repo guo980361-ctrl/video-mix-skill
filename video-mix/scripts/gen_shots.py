@@ -9,9 +9,16 @@ Plain text format (one shot per line):
 JSON format:
     [{"prompt": "...", "name": "shot01"}, ...]
 
+Cost control:
+  * Existing files are skipped, so re-running never pays twice.
+  * A content-addressed cache in ~/.workbuddy/cache/video-mix serves
+    repeated prompts without touching the API.
+  * The anonymous free tier is limited to one image per 45 seconds per IP,
+    so requests are spaced out. The keyed backend has no such limit.
+
 Usage:
     python gen_shots.py --shots shots.txt --outdir ./shots
-    python gen_shots.py --shots shots.json --outdir ./shots --width 1024 --height 576
+    python gen_shots.py --shots shots.json --outdir ./shots --backend keyed
 """
 
 from __future__ import annotations
@@ -23,8 +30,17 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from gen_image import cache_path, legacy_fetch  # noqa: E402
+from pollinations_client import (  # noqa: E402
+    IMAGE_MODELS,
+    PollinationsError,
+    find_key,
+    gen_image as polli_gen_image,
+)
 from vmix_common import install_deps, out_path, slugify  # noqa: E402
-from gen_image import fetch, build_url  # noqa: E402
+
+LEGACY_MODELS = ["flux", "sana", "zimage", "turbo"]
 
 
 def parse_shots(path: Path) -> list[dict]:
@@ -51,12 +67,14 @@ def main() -> int:
     ap.add_argument("--outdir", default="shots")
     ap.add_argument("--width", type=int, default=1024)
     ap.add_argument("--height", type=int, default=1024)
+    ap.add_argument("--backend", default="auto", choices=["auto", "keyed", "anon"])
     ap.add_argument("--model", default=None)
+    ap.add_argument("--key", help="Pollinations API key (overrides env/file)")
     ap.add_argument("--delay", type=float, default=46.0,
-                    help="seconds between requests; the free tier allows "
-                         "only one image per 45s per IP")
+                    help="seconds between requests; only needed for the "
+                         "anonymous tier (1 image / 45s / IP)")
     ap.add_argument("--no-delay", action="store_true",
-                    help="ignore the free-tier rate limit (expect 402 errors)")
+                    help="ignore the anonymous rate limit (expect 402 errors)")
     args = ap.parse_args()
 
     install_deps(quiet=True)
@@ -64,7 +82,17 @@ def main() -> int:
     outdir = out_path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[shots] {len(shots)} shots -> {outdir}")
+    key = find_key(args.key)
+    if args.backend == "auto":
+        backend = "keyed" if key else "anon"
+    else:
+        backend = args.backend
+    if backend == "keyed" and not key:
+        print("[shots] --backend keyed requires a Pollinations key.\n"
+              "  Free signup: https://enter.pollinations.ai/keys", file=sys.stderr)
+        return 2
+
+    print(f"[shots] {len(shots)} shots -> {outdir}  (backend={backend})")
     ok, fail = [], []
     for i, s in enumerate(shots, 1):
         name = s.get("name") or slugify(s["prompt"])
@@ -73,16 +101,36 @@ def main() -> int:
             print(f"[shots] {i}/{len(shots)} skip {name} (exists)")
             ok.append(str(out))
             continue
-        url = build_url(s["prompt"], args.width, args.height, args.model,
-                        None, True, False)
+
+        cache_file = cache_path(s["prompt"], args.width, args.height,
+                                args.model, None, backend)
+        if cache_file.exists():
+            out.write_bytes(cache_file.read_bytes())
+            print(f"[shots] {i}/{len(shots)} OK {name} (cache hit)")
+            ok.append(str(out))
+            continue
+
         try:
-            fetch(url, out, tries=3)
+            if backend == "keyed":
+                model = args.model or IMAGE_MODELS[0]
+                polli_gen_image(s["prompt"], out, model=model,
+                                width=args.width, height=args.height, key=key)
+            else:
+                model = args.model if args.model in LEGACY_MODELS else None
+                legacy_fetch(s["prompt"], out, model, args.width, args.height,
+                             None, True, False)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_bytes(out.read_bytes())
             print(f"[shots] {i}/{len(shots)} OK {name}")
             ok.append(str(out))
-        except Exception as exc:
+        except (PollinationsError, Exception) as exc:
             print(f"[shots] {i}/{len(shots)} FAIL {name}: {str(exc)[:160]}")
             fail.append(name)
-        if i < len(shots) and args.delay and not args.no_delay:
+
+        # The keyed backend has no per-IP rate limit, so the delay is only
+        # applied for the anonymous tier.
+        if (backend == "anon" and i < len(shots) and args.delay
+                and not args.no_delay):
             time.sleep(args.delay)
 
     print(f"[shots] done: {len(ok)} ok, {len(fail)} failed")
