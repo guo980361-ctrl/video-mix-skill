@@ -188,8 +188,54 @@ python scripts/mix.py --clips clips/c1.mp4 clips/c2.mp4 clips/c3.mp4 \
 - `--bgm` 会用 `sidechaincompress` 自动在有人声时压低 BGM（`--no-duck` 关闭）
 - 字幕字号默认按输出宽度 4.5% 自适应；用 `--subtitle-size` 手动覆盖
 
-### 第 7 步（可选）：接入剪映专业版继续精修
+### 第 6.5 步（推荐）：精细化流水线 —— 从"能看"到"能发"
 
+上面那条快路径出的片子**能用但粗糙**。粗糙的根源不在素材，而在五个环节
+各做各的：分辨率被裁掉了、色调不统一、运镜一眼假、剪辑没节奏、音乐像测试音。
+
+想要作品级的成片，改用这条精细流水线。**所有决策收进一份主控方案
+（JSON），每个环节都从它读取**，这是整套流程的关键：
+
+```bash
+# 1. 写主控方案 shots.json：全局 anchor + 每镜的时长/转场/景别/光线/台词
+python scripts/gen_stills.py --plan shots.json --outdir shots \
+  --width 1024 --height 1820            # 竖屏原生，别用方图裁切
+
+python scripts/clean_watermark.py --indir shots --outdir shots_clean
+
+# 2. 做片段：真动态优先，额度不够自动降级为 2.5D 视差运镜
+python scripts/make_clips.py --plan shots.json --stills shots_clean --out clips
+python scripts/make_clips.py --plan shots.json --stills shots_clean --out clips --no-ltx
+
+# 3. 音乐 + 房间音 + 精确闪避（人声频段做 EQ，不是简单压低）
+python scripts/audio_score.py --duration 28 --out audio/score.wav \
+  --room-out audio/room.wav --voice audio/voice.mp3 --mix-out audio/mix.wav
+
+# 4. 逐镜转场 + 字幕 + 首尾淡入淡出（剪辑点对齐台词）
+python scripts/assemble.py --plan shots.json --clips clips --out raw.mp4 \
+  --audio audio/mix.wav --subtitles audio/voice.srt
+
+# 5. 全片统一调色（一次过，跨镜头色温一致）
+python scripts/grade.py --in raw.mp4 --out final.mp4 --preset amber
+```
+
+新增脚本：
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/gen_stills.py` | 按主控方案批量生图，自动限速去重 |
+| `scripts/clean_watermark.py` | 批量去水印（免费层必带） |
+| `scripts/camera_move.py` | 2.5D 视差 / 呼吸感 / 手持微抖运镜，9 种模式 |
+| `scripts/make_clips.py` | 分发到真动态或运镜，**额度耗尽自动降级** |
+| `scripts/audio_score.py` | 加法合成 BGM + 房间底噪 + 精确闪避混音 |
+| `scripts/assemble.py` | 逐镜转场、字幕样式、首尾淡入淡出 |
+| `scripts/grade.py` | 统一调色 + 暗角 + 颗粒 + 高光溢出 |
+
+**完整的提示词工程踩坑记录**（`frame` 会招来相框、`ginger` 会变成发色、
+"人的腿"一定画出人、免费档分辨率天花板等）见
+`references/finishing.md`，做片之前务必读一遍。
+
+### 第 7 步（可选）：接入剪映专业版继续精修
 成片一步就出，但如果你想**在剪映里继续调**（换字体、加花字、做音效、改节奏），
 把上面那堆素材直接变成一个可编辑的剪映工程：
 
@@ -324,6 +370,14 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 12. **剪映草稿的时间单位是微秒**（1 秒 = 1,000,000）。写成毫秒会导致时间轴对不上——这是剪映自动化最常见的坑。
 13. **转场挂在「前一个」片段上**，且必须在片段加入轨道**之前**注册到 `materials.transitions`，否则转场素材会丢失。
 14. **剪映 6.0 起草稿加密**，7+ 还隐藏了导出控件（自动导出仅 6.x 及以下 + Windows）。
+15. **提示词里的 `frame` 会招来相框**。模型把 frame 理解成"画框"，直接给你画一张装在相框里的照片。同类触发词：picture frame、painting、artwork。改成"photograph"或"picture"。
+16. **`ginger` 会被理解成发色**。`ginger tabby cat` 和 person 同框时会变成红发的人；单独用也偏奶油色。一律写 `orange tabby cat`。
+17. **提示词里写"人的腿/脚/手"大概率画出人**。实测三连翻车：画成红发的人、画成人抱着猫、或者手直接消失。把主体放句首（`an orange cat nuzzling a person's calf`）比把人体放主语位（`a person's calf being nuzzled`）成功率高得多。实在画不好就换语义——"蹭腿"改成"蹭进毯子"。
+18. **极端姿态会崩坏**。`stretching its head upward` 会把猫头拉成长条；`the whole body visible` 常常只出一个头。用安全姿态：坐着、侧头、躺下、走路、蜷成一团。
+19. **免费档分辨率长边锁死 1024**，9:16 最高 576×1023。生成方图再裁切只剩 432×768，要损失一档有效像素——直接请求竖屏。
+20. **`colortemperature` 和 `colorbalance` 方向会互相抵消**，叠加后结果不可预测（实测把暖度参数调大，成片暖度反而从 +59 掉到 +51）。暖度提升要用 `lutrgb` 逐通道做，单调且可测量。
+21. **ASS 样式行的字段顺序必须严格对上 Format**。少写 `Fontname` 字段，后面全部错位——最常见的事故是把宽高填进 Fontname 和 Fontsize，字号变成 1080。
+22. **调色要靠测量不能靠感觉**。抽帧算平均 R−B，暖色片应 > +70；逐镜也测一遍，差距大说明某镜头色偏没救回来。
     加密算法已逆转为纯 Python AES-256-GCM（key/iv 藏在密文自身的 12 个固定偏移里），
     **不需要装剪映、不需要 hook、不需要原生库**——见 `jianying_crypto.py`。
 15. **剪映 6.0 起正文文件改名 `draft_info.json`**。继续用 5.9 的 `draft_content.json`
@@ -374,6 +428,13 @@ python scripts/dewatermark.py --image shots/shot01.jpg --out shots/shot01_clean.
 | `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
+| `scripts/gen_stills.py` | 按主控方案批量生图（精细化流水线） |
+| `scripts/clean_watermark.py` | 批量去水印 |
+| `scripts/camera_move.py` | 2.5D 视差 / 呼吸感 / 手持微抖运镜，9 种模式 |
+| `scripts/make_clips.py` | 分发到真动态或运镜，额度耗尽自动降级 |
+| `scripts/audio_score.py` | 加法合成 BGM + 房间底噪 + 精确闪避混音 |
+| `scripts/assemble.py` | 逐镜转场 + 字幕样式 + 首尾淡入淡出 |
+| `scripts/grade.py` | 全片统一调色 + 暗角 + 颗粒 + 高光溢出 |
 | `tests/test_jianying.py` | 剪映接入测试套件（62 个用例，只用标准库） |
 
 ## 自测

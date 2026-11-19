@@ -164,7 +164,45 @@ python scripts/mix.py --clips clips/clip01.mp4 clips/clip02.mp4 \
   --subtitles voice.srt --voice voice.mp3 --bgm bgm.mp3
 ```
 
-### 7. 接入剪映专业版（可选，继续精修）
+### 7. 精细化流水线（从"能看"到"能发"）
+
+上面 1–6 步出的片子**能用但粗糙**。粗糙不在素材，而在这五处：
+
+| 粗糙来源 | 快路径的做法 | 精细化的做法 |
+|---|---|---|
+| 分辨率 | 方图裁 9:16（剩 432×768） | 竖屏原生 576×1023 |
+| 色调 | 每张各调各的 | 全片统一调色（暖度可测量） |
+| 运镜 | Ken Burns 整帧同速缩放 | 2.5D 视差 + 呼吸感 + 手持微抖 |
+| 剪辑 | 等长分镜 + 全部同一种叠化 | 逐镜时长对齐台词 + 转场多样化 |
+| 声音 | 正弦波 BGM + 阈值闪避 | 加法合成音色 + 频段 EQ + 精确包络闪避 |
+
+**所有决策收进一份主控方案 JSON**，每个环节都从它读取——这是整套流程的关键：
+
+```bash
+# 1. 主控方案 shots.json：全局 anchor + 每镜时长/转场/景别/光线/台词
+python scripts/gen_stills.py --plan shots.json --outdir shots --width 1024 --height 1820
+python scripts/clean_watermark.py --indir shots --outdir shots_clean
+
+# 2. 片段：真动态优先，额度耗尽自动降级为运镜
+python scripts/make_clips.py --plan shots.json --stills shots_clean --out clips
+
+# 3. 音乐 + 房间音 + 精确闪避
+python scripts/audio_score.py --duration 28 --out audio/score.wav \
+  --room-out audio/room.wav --voice audio/voice.mp3 --mix-out audio/mix.wav
+
+# 4. 逐镜转场 + 字幕 + 首尾淡入淡出
+python scripts/assemble.py --plan shots.json --clips clips --out raw.mp4 \
+  --audio audio/mix.wav --subtitles audio/voice.srt
+
+# 5. 全片统一调色
+python scripts/grade.py --in raw.mp4 --out final.mp4 --preset amber
+```
+
+> 📖 **做片之前务必读 `references/finishing.md`**——里面是完整提示词工程踩坑记录：
+> `frame` 会招来相框、`ginger` 会变成发色、写"人的腿"一定画出人、
+> 免费档分辨率天花板、以及调色/闪避/字幕样式的具体做法。
+
+### 8. 接入剪映专业版（可选，继续精修）
 
 成片一步就出。想**在剪映里继续调**（换字体、加花字、做音效、改节奏），
 把素材直接变成可编辑的剪映工程：
@@ -228,6 +266,13 @@ python scripts/jianying_check.py ./jianying-out/我的混剪
 | `scripts/jianying_crypto.py` | 剪映草稿离线加解密（AES-256-GCM，无需安装剪映） |
 | `scripts/jianying_pack.py` | 导出剪映素材包 + FCPXML（版本无关的降级方案） |
 | `scripts/jianying_check.py` | 校验剪映草稿完整性（悬空引用、重叠、超时长、素材丢失） |
+| `scripts/gen_stills.py` | 按主控方案批量生图（精细化流水线） |
+| `scripts/clean_watermark.py` | 批量去水印 |
+| `scripts/camera_move.py` | 2.5D 视差 / 呼吸感 / 手持微抖运镜，9 种模式 |
+| `scripts/make_clips.py` | 分发到真动态或运镜，额度耗尽自动降级 |
+| `scripts/audio_score.py` | 加法合成 BGM + 房间底噪 + 精确闪避混音 |
+| `scripts/assemble.py` | 逐镜转场 + 字幕样式 + 首尾淡入淡出 |
+| `scripts/grade.py` | 全片统一调色 + 暗角 + 颗粒 + 高光溢出 |
 | `scripts/dewatermark.py` | 去除 Pollinations 右下角水印（OpenCV inpaint） |
 | `scripts/vmix_common.py` | 公共工具（ffmpeg 定位、依赖安装、重试、额度提示） |
 | `tests/test_jianying.py` | 剪映接入测试套件（62 个用例，只用标准库） |
@@ -314,8 +359,9 @@ video-mix-skill/
 ├── LICENSE
 └── video-mix/
     ├── SKILL.md                      # Agent 使用说明（含完整工作流与踩坑清单）
-    ├── scripts/                      # 7 个可执行脚本 + 公共模块
+    ├── scripts/                      # 14 个可执行脚本 + 公共模块
     ├── references/
+    │   ├── finishing.md              # 精细化流水线：提示词工程、调色、音频、字幕
     │   ├── free-backends.md          # 所有后端的实测记录、失效清单、Space 清单
     │   ├── local-gpu.md              # 有独显时的本地部署路线
     │   └── licensing.md              # 商用授权与合规清单
