@@ -219,6 +219,53 @@ def _legacy_image(prompt: str, out: Path, model: str, width: int, height: int,
 
 # ---------------------------------------------------------------- video
 
+MEDIA_BASE = "https://media.pollinations.ai"
+
+
+def _upload_media(path: Path, key: str | None, *, timeout: int = 300) -> str:
+    """Upload a local file and return its public URL.
+
+    The video endpoint accepts an image only as a URL; a base64 data URI
+    exceeds the URI length limit and triggers HTTP 414.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise PollinationsError(f"image not found: {path}")
+
+    boundary = "----v_mix_boundary_%d" % int(time.time() * 1000)
+    mime = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+    name = path.name.replace('"', "")
+    payload = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'
+        f"Content-Type: {mime}\r\n\r\n"
+    ).encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    if key:
+        headers["Authorization"] = "Bearer " + key
+
+    req = urllib.request.Request(f"{MEDIA_BASE}/upload", data=payload, headers=headers,
+                                 method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+    except urllib.error.HTTPError as exc:
+        raise PollinationsError(
+            f"media upload failed: HTTP {exc.code} {exc.read()[:200]!r}") from exc
+    except Exception as exc:
+        raise PollinationsError(f"media upload failed: {exc}") from exc
+
+    try:
+        data = json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        raise PollinationsError(f"unexpected upload response: {body[:200]!r}")
+
+    url = data.get("url") or data.get("location") or data.get("media_url")
+    if not url:
+        raise PollinationsError(f"upload response has no url: {str(data)[:200]}")
+    return url
+
 
 def gen_video(prompt: str, out: Path, *, image: Path | None = None,
               model: str = "bytedance/seedance-2.0-fast",
@@ -250,10 +297,10 @@ def gen_video(prompt: str, out: Path, *, image: Path | None = None,
         "referrer": referrer,
     }
     if image:
-        data = Path(image).read_bytes()
-        import base64
-        b64 = base64.b64encode(data).decode()
-        q["image"] = f"data:image/jpeg;base64,{b64}"
+        # The image must be passed as a URL. Inlining it as a base64 data URI
+        # blows past the URI length limit and the server answers HTTP 414,
+        # so upload it to the media host first and reference that URL.
+        q["image"] = _upload_media(Path(image), key, timeout=timeout)
     url = f"{GEN_BASE}/video/{urllib.parse.quote(prompt, safe='')}?{urllib.parse.urlencode(q)}"
 
     code, body, ctype = _get(url, key, timeout=timeout, accept="video/*")
